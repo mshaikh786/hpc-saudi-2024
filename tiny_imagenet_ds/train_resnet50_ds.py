@@ -1,4 +1,4 @@
-import argparse
+import argparse,os
 
 import deepspeed
 import torch
@@ -32,6 +32,12 @@ def add_argument():
         type=int,
         default=-1,
         help="local rank passed from distributed launcher",
+    )
+    parser.add_argument(
+        "--val-interval",
+        type=int,
+        default=2,
+        help="run validation after given interval",
     )
     parser.add_argument(
         "--log-interval",
@@ -110,12 +116,31 @@ def main(args):
     trainsampler = torch.utils.data.distributed.DistributedSampler(trainset)
     trainloader = torch.utils.data.DataLoader(trainset, 
                                            batch_size=args.batch_size,
-                                           sampler=trainsampler,drop_last=True,
+                                           sampler=trainsampler,
+                                           shuffle=(trainsampler is None),
+                                           drop_last=True,
+                                           num_workers=6,
+                                           pin_memory=True)
+        # Load or download cifar data.
+    valset = datasets.ImageFolder("/ibex/reference/CV/tinyimagenet/train",
+                         transform=transforms.Compose([
+                             transforms.RandomResizedCrop(224),
+                             transforms.RandomHorizontalFlip(),
+                             transforms.ToTensor(),
+                             transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                                  std=[0.229, 0.224, 0.225])
+                         ]))
+    valsampler = torch.utils.data.distributed.DistributedSampler(valset,shuffle=False)
+    valloader = torch.utils.data.DataLoader(trainset, 
+                                           batch_size=args.batch_size,
+                                           sampler=valsampler,
+                                           shuffle=False,drop_last=True,
                                            num_workers=6,
                                            pin_memory=True)
     # Get the local device name (str) and local rank (int).
     local_device = get_accelerator().device_name(model_engine.local_rank)
     local_rank = model_engine.local_rank
+    global_rank= model_engine.global_rank
 
     # For float32, target_dtype will be None so no datatype conversion needed.
     target_dtype = None
@@ -137,6 +162,7 @@ def main(args):
 
     for epoch in range(args.epochs):  # loop over the dataset multiple times
         running_loss = 0.0
+        model_engine.train()
         for i, data in enumerate(trainloader):
             # Get the inputs. ``data`` is a list of [inputs, labels].
             inputs, labels = data[0].to(local_device), data[1].to(local_device)
@@ -150,16 +176,34 @@ def main(args):
 
             model_engine.backward(loss)
             model_engine.step()
-
             # Print statistics
             running_loss += loss.item()
-            if local_rank == 0 and i % args.log_interval == (
+            if global_rank == 0 and i % args.log_interval == (
                 args.log_interval - 1
             ):  # Print every log_interval mini-batches.
                 print(
-                    f"[{epoch + 1 : d}, {i + 1 : 5d}] loss: {running_loss / args.log_interval : .3f}"
+                    f"[{epoch + 1 : d}, {i + 1 : 5d}] Training loss: {running_loss / args.log_interval : .3f}"
                 )
                 running_loss = 0.0
+
+        # Validation 
+        if (epoch+1 % args.val_interval) == 0:
+            running_loss_v  = 0.0
+            model_engine.eval()
+            with torch.no_grad():
+                for ii, data_v in enumerate(valloader):
+                    inputs_v,labels_v = data_v[0].to(local_device), data_v[1].to(local_device)
+                    # Try to convert to target_dtype if needed
+                    if target_dtype != None:
+                        inputs_v = inputs_v.to(target_dtype)
+                    outputs_v = model_engine(inputs_v)
+                    loss_v  = criterion(outputs_v, labels_v)
+                    running_loss_v  += loss_v.item()
+            if global_rank == 0:
+                print(
+                    f"[{epoch + 1 : d}] Validation loss: {running_loss_v / ii  : .3f}"
+                )
+
     print("Finished Training")
 
     ########################################################################
