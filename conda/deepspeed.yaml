@@ -1,0 +1,34 @@
+name: deepspeed
+channels:
+ - pytorch
+ - nvidia
+ - conda-forge
+
+dependencies:
+ - python=3.10
+ - gcc=12.2.0
+ - gxx=12.2.0
+ - numpy=1.26
+ - pip
+ - cuda=12.4
+ - cuda-toolkit=12.4
+ - ucx
+ - openmpi
+ - mpi4py
+ - pytorch=2.4.0
+ - pytorch-cuda=12.4
+ - torchvision
+ - torchaudio
+ - jupyterlab
+ - pip:
+   - git+https://github.com/microsoft/DeepSpeed.git@v0.14.5
+   - transformers
+   - datasets
+   - fire
+   - pytz
+   - loguru
+   - sh
+   - pytest
+   - tqdm
+   - --extra-index-url https://pypi.anaconda.org/rapidsai-wheels-nightly/simple --pre jupyterlab_nvdashboard
+  
