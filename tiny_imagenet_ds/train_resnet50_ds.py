@@ -21,11 +21,10 @@ def add_argument():
         help="number of total epochs (default: 30)",
     )
     parser.add_argument(
-        "-b",
-        "--batch-size",
-        default=256,
+        "--num-workers",
+        default=4,
         type=int,
-        help="mini-batch size per GPU",
+        help="number of dataloader cpus (default: 4)",
     )
     parser.add_argument(
         "--local_rank",
@@ -33,12 +32,7 @@ def add_argument():
         default=-1,
         help="local rank passed from distributed launcher",
     )
-    parser.add_argument(
-        "--val-interval",
-        type=int,
-        default=2,
-        help="run validation after given interval",
-    )
+
     parser.add_argument(
         "--log-interval",
         type=int,
@@ -92,6 +86,9 @@ def main(args):
         model=net,
         model_parameters=net.parameters(),
     )
+    micro_batch_size=int(model_engine.train_micro_batch_size_per_gpu())
+    global_batch_size=int(model_engine.train_batch_size())
+
    ########################################################################
     # Step1. Data Preparation.
     #
@@ -115,11 +112,11 @@ def main(args):
                          ]))
     trainsampler = torch.utils.data.distributed.DistributedSampler(trainset)
     trainloader = torch.utils.data.DataLoader(trainset, 
-                                           batch_size=args.batch_size,
+                                           batch_size=micro_batch_size,
                                            sampler=trainsampler,
                                            shuffle=(trainsampler is None),
                                            drop_last=True,
-                                           num_workers=6,
+                                           num_workers=args.num_workers,
                                            pin_memory=True)
         # Load or download cifar data.
     valset = datasets.ImageFolder("/ibex/reference/CV/tinyimagenet/train",
@@ -132,10 +129,11 @@ def main(args):
                          ]))
     valsampler = torch.utils.data.distributed.DistributedSampler(valset,shuffle=False)
     valloader = torch.utils.data.DataLoader(trainset, 
-                                           batch_size=args.batch_size,
+                                           batch_size=micro_batch_size,
                                            sampler=valsampler,
-                                           shuffle=False,drop_last=True,
-                                           num_workers=6,
+                                           shuffle=False,
+                                           drop_last=True,
+                                           num_workers=args.num_workers,
                                            pin_memory=True)
     # Get the local device name (str) and local rank (int).
     local_device = get_accelerator().device_name(model_engine.local_rank)
@@ -159,7 +157,7 @@ def main(args):
     # We simply have to loop over our data iterator, and feed the inputs to the
     # network and optimize. (DeepSpeed handles the distributed details for us!)
     ########################################################################
-
+    print(f'rank[{global_rank},{local_rank}]:: Batch size={micro_batch_size} , Global batch size={global_batch_size}')
     for epoch in range(args.epochs):  # loop over the dataset multiple times
         running_loss = 0.0
         model_engine.train()
@@ -182,27 +180,26 @@ def main(args):
                 args.log_interval - 1
             ):  # Print every log_interval mini-batches.
                 print(
-                    f"[{epoch + 1 : d}, {i + 1 : 5d}] Training loss: {running_loss / args.log_interval : .3f}"
+                    f"[Epoch: {epoch+1:5d}, batch:{i+1:5d}] Training loss: {running_loss / args.log_interval : .3f}"
                 )
                 running_loss = 0.0
 
         # Validation 
-        if (epoch+1 % args.val_interval) == 0:
-            running_loss_v  = 0.0
-            model_engine.eval()
-            with torch.no_grad():
-                for ii, data_v in enumerate(valloader):
-                    inputs_v,labels_v = data_v[0].to(local_device), data_v[1].to(local_device)
-                    # Try to convert to target_dtype if needed
-                    if target_dtype != None:
-                        inputs_v = inputs_v.to(target_dtype)
-                    outputs_v = model_engine(inputs_v)
-                    loss_v  = criterion(outputs_v, labels_v)
-                    running_loss_v  += loss_v.item()
-            if global_rank == 0:
-                print(
-                    f"[{epoch + 1 : d}] Validation loss: {running_loss_v / ii  : .3f}"
-                )
+        running_loss_v  = 0.0
+        model_engine.eval()
+        with torch.no_grad():
+            for ii, data_v in enumerate(valloader):
+                inputs_v,labels_v = data_v[0].to(local_device), data_v[1].to(local_device)
+                # Try to convert to target_dtype if needed
+                if target_dtype != None:
+                    inputs_v = inputs_v.to(target_dtype)
+                outputs_v = model_engine(inputs_v)
+                loss_v  = criterion(outputs_v, labels_v)
+                running_loss_v  += loss_v.item()
+        if global_rank == 0:
+            print(
+                f"[Epoch: {epoch + 1 :5d}]       Validation loss: {running_loss_v / ii  : .3f}"
+            )
 
     print("Finished Training")
 
