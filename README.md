@@ -36,3 +36,8 @@ ln -s ${CONDA_PREFIX}/targets/x86_64-linux/include/* ${CONDA_PREFIX}/include
 ln -s ${CONDA_PREFIX}/targets/x86_64-linux/lib/* ${CONDA_PREFIX}/lib
 
 ```
+Set the following variable in the runner script helps DeepSpeed to compile a kernel multiple GPU microarchitectures. E.g. the following enables compilation for NVIDIA Volta, Ampere architetures.
+
+``` 
+export TORCH_CUDA_ARCH_LIST='7.0 7.5 8.0'
+```
