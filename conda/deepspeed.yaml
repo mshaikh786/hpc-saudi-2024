@@ -19,6 +19,7 @@ dependencies:
  - pytorch-cuda=12.4
  - torchvision
  - torchaudio
+ - accelerate=0.29
  - jupyterlab
  - pip:
    - git+https://github.com/microsoft/DeepSpeed.git@v0.14.5
