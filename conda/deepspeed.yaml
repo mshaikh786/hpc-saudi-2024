@@ -31,5 +31,7 @@ dependencies:
    - sh
    - pytest
    - tqdm
-   - --extra-index-url https://pypi.anaconda.org/rapidsai-wheels-nightly/simple --pre jupyterlab_nvdashboard
+   - jupyterlab_nvdashboard==0.9.0
+   - ray[tune]
+   - hyperopt
   
